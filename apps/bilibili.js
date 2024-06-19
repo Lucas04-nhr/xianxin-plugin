@@ -1,10 +1,10 @@
-import plugin from "../../../lib/plugins/plugin.js";
-import xxCfg from "../model/xxCfg.js";
-import fs from "node:fs";
-import Bilibili from "../model/bilibili.js";
 import lodash from 'lodash';
+import fs from "node:fs";
+import plugin from "../../../lib/plugins/plugin.js";
 import { Restart } from "../../other/restart.js";
-import { BILIBILI_HEADERS, applyQRCode, pollQRCode, readSavedCookieItems, saveLoginCK, saveLocalBiliCk, getNewTempCk, readTempCk, synCookie, get_buvid_fp, postExClimbWuzhi } from "../util/BiliApi.js";
+import Bilibili from "../model/bilibili.js";
+import xxCfg from "../model/xxCfg.js";
+import { BILIBILI_HEADERS, applyQRCode, checkLogin, getNewTempCk, get_buvid_fp, pollQRCode, postExClimbWuzhi, readSavedCookieItems, readTempCk, saveLocalBiliCk, saveLoginCK, synCookie } from "../util/BiliApi.js";
 
 let bilibiliSetFile = "./plugins/trss-xianxin-plugin/config/bilibili.set.yaml";
 if (!fs.existsSync(bilibiliSetFile)) {
@@ -69,6 +69,12 @@ export class bilibili extends plugin {
           reg: '^#扫码(B|b)站登录$',
           fnc: "BiliLogin",
           event: 'message'
+        },
+        {
+          reg: '^#*我的*(b|B)站登录$',
+          event: 'message',
+          permission: "master",
+          fnc: 'myLogin'
         },
         {
           reg: "^#*绑定*(b|B)站(ck|CK|cK|Ck)*(:|：)*.*$",
@@ -140,16 +146,20 @@ export class bilibili extends plugin {
 
         //biliLoginCk = buvid_fp + biliLoginCk;
 
-        await saveLoginCK(this.e, biliLoginCk);
+        if (lodash.trim(biliLoginCk).length != 0) {
+          await saveLoginCK(this.e, biliLoginCk);
+          this.e.reply(`get bilibili LoginCk：成功！`)
+          const result = await postExClimbWuzhi(biliLoginCk); //激活ck
 
-        const result = await postExClimbWuzhi(biliLoginCk); //激活ck
-
-        const data = await result.json(); // 解析校验结果
-        const dataCode = data.code; // 获取校验结果的 code
-        if (dataCode !== 0) {
-          (logger ?? Bot.logger)?.mark(`trss-xianxin插件：获取tempCK，B站ExC接口校验失败：${JSON.stringify(data)}`); // 记录校验失败的日志
-        } else if (dataCode === 0) {
-          (logger ?? Bot.logger)?.mark(`trss-xianxin插件：获取tempCK，B站ExC接口校验成功：${JSON.stringify(data)}`); // 记录校验成功的日志
+          const data = await result.json(); // 解析校验结果
+          const dataCode = data.code; // 获取校验结果的 code
+          if (dataCode !== 0) {
+            (logger ?? Bot.logger)?.mark(`trss-xianxin插件：获取tempCK，B站ExC接口校验失败：${JSON.stringify(data)}`); // 记录校验失败的日志
+          } else if (dataCode === 0) {
+            (logger ?? Bot.logger)?.mark(`trss-xianxin插件：获取tempCK，B站ExC接口校验成功：${JSON.stringify(data)}`); // 记录校验成功的日志
+          }
+        } else {
+          this.e.reply(`get bilibili LoginCk：失败X﹏X`)
         }
       } catch (Error) {
         (logger ?? Bot.logger)?.info(`trss-xianxin-plugin Login bilibili Failed：${Error}`);
@@ -159,10 +169,10 @@ export class bilibili extends plugin {
     }
   }
 
-  /**验证B站登录 
-    async checkLogin() {
-      await BiliHandler.checkLogin(this.e);
-    } */
+  /**验证B站登录 */
+  async myLogin() {
+    await checkLogin(this.e);
+  }
 
   /** 绑定B站ck */
   async bingBiliCk() {
@@ -327,7 +337,7 @@ export class bilibili extends plugin {
       return;
     }
 
-    const res = await new Bilibili(this.e).getBilibiliDynamicInfo(uid);
+    const res = await new Bilibili(this.e).getBilibiliDynamicInfoNew(uid);
 
     if (!res) {
       this.e.reply("诶嘿，出了点网络问题，等会再试试吧~");
@@ -455,10 +465,13 @@ export class bilibili extends plugin {
 
     const accInfoResJsonData = await accInfoRes.json();
 
-    const data = accInfoResJsonData?.data || null;
+    const data = accInfoResJsonData.data || null;
 
-    if (accInfoResJsonData.code != 0 || !data) {
-      this.reply("咦~ UID不对诶，请核对一下吧～");
+    if (accInfoResJsonData.code == -799) {
+      this.reply("遭遇风控：请求过于频繁，请稍后再试。");
+      return true;
+    } else if (accInfoResJsonData.code != 0 || !data) {
+      this.reply("UID不对或遭遇风控，获取失败");
       return true;
     }
     const message = [
